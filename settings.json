@@ -30,6 +30,5 @@
     "mode": "hold"
   },
   "autoMemoryEnabled": false,
-  "theme": "dark",
-  "voiceEnabled": true
+  "theme": "dark"
 }
