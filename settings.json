@@ -24,11 +24,17 @@
   "enabledPlugins": {},
   "extraKnownMarketplaces": {},
   "language": "Russian",
+  "attribution": {
+    "commit": "",
+    "pr": ""
+  },
   "awaySummaryEnabled": false,
   "voice": {
     "enabled": true,
-    "mode": "hold"
+    "mode": "tap",
+    "autoSubmit": true
   },
   "autoMemoryEnabled": false,
-  "theme": "dark"
+  "theme": "dark",
+  "voiceEnabled": true
 }
