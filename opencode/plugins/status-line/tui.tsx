@@ -64,9 +64,9 @@ export default Plugin.define({
           {dirText()}
         </text>
         <text fg={context.theme.text.muted}>
-          {branch() ? ` | ⎇  ${branch()}` : ""}
+          {branch() ? ` | ⎇  ${branch()}` : null}
         </text>
-        {branch() && dirty() ? <text fg="#eab308">{" *"}</text> : ""}
+        {branch() && dirty() ? <text fg="#eab308">{" *"}</text> : null}
       </box>
     )
 
@@ -80,48 +80,35 @@ export default Plugin.define({
       }
     }, 2000)
     await context.data.location.model.sync(location)
-    await context.data.location.agent.sync(location)
-
-    const capitalize = (s) => s.charAt(0).toUpperCase() + s.slice(1)
-
-    const agentText = () => {
-      try {
-        const id = currentSessionID()
-        const messages = id
-          ? (context.data.session.message.list(id) ?? [])
-          : []
-        for (let i = messages.length - 1; i >= 0; i--) {
-          const info = messages[i]?.info ?? messages[i]
-          if (info?.role === "user" && info.agent) return capitalize(String(info.agent))
-        }
-        const agents = context.data.location.agent.list(location) ?? []
-        const primary = agents.find((a) => a.mode === "primary") ?? agents[0]
-        return primary?.name ? capitalize(String(primary.name)) : undefined
-      } catch {
-        return undefined
-      }
-    }
-
-    const modelText = () => {
-      const model = context.ui.model.current()
-      if (!model) return undefined
-      const m = model
-      const name = m.name ?? m.modelID ?? m.id
-      if (!name) return undefined
-      const provider = typeof m.providerID === "string" ? m.providerID.split("-")[0] : undefined
-      const label = provider ? `${provider}/${name}` : name
-      return m.variant ? `${label} (${m.variant})` : label
-    }
-
+    // длина диалога = реальный размер контекста на последнем ходе модели
+    // (из токенов последнего assistant-сообщения, не накопительное)
+    let lastContextUsed: number | undefined
     const contextText = () => {
       const id = currentSessionID()
-      if (!id) return undefined
-      const session = context.data.session.get(id)
-      const t = session?.tokens
-      if (!t) return undefined
-      const used =
-        (t.input ?? 0) + (t.output ?? 0) + (t.reasoning ?? 0) + (t.cache?.read ?? 0)
-      if (!used) return undefined
+      if (!id) {
+        lastContextUsed = undefined
+        return undefined
+      }
+
+      let used: number | undefined
+      const messages = context.data.session.message.list(id) ?? []
+      const last = messages.findLast((m) => (m.info ?? m)?.type === "assistant")
+      const t = (last?.info ?? last)?.tokens
+      if (t) {
+        used =
+          (t.input ?? 0) +
+          (t.cache?.read ?? 0) +
+          (t.cache?.write ?? 0) +
+          (t.output ?? 0) +
+          (t.reasoning ?? 0)
+      }
+      if (used) {
+        lastContextUsed = used
+      } else {
+        // сообщений ещё нет в памяти — показываем последнее честное значение
+        used = lastContextUsed
+        if (!used) return undefined
+      }
 
       const current = context.ui.model.current()
       const models = context.data.location.model.list(location) ?? []
@@ -160,14 +147,15 @@ export default Plugin.define({
       return parts.join(" ")
     }
 
+    // --- текущий агент ---
+    const agentText = () =>
+      (context.ui as any).agent?.current?.()?.id as string | undefined
+
     const lineTwo = () => (
       <box flexDirection="row">
-        {agentText() ? <text fg="#ffffff">{agentText()}</text> : ""}
+        {agentText() ? <text fg="#ffffff">{agentText()}</text> : null}
         <text fg={context.theme.text.muted}>
-          {[modelText(), contextText(), tokensText()].filter(Boolean).length > 0
-            ? (agentText() ? " · " : "") +
-              [modelText(), contextText(), tokensText()].filter(Boolean).join(" · ")
-            : ""}
+          {[contextText(), tokensText()].filter(Boolean).join(" · ")}
         </text>
       </box>
     )
