@@ -6,8 +6,12 @@ HOME_DIR := $(HOME)
 
 install:
 	@command -v apm >/dev/null || { echo "make install: нет apm в PATH — установите apm" >&2; exit 1; }
-	@# 1. Глобальная установка APM-пакета с правилами
-	apm install -g $(CURDIR) --target claude,opencode,gemini
+	@# 1. Глобальная установка APM-пакета с правилами и общих скиллов
+	cd $(HOME_DIR)/.apm && apm install -g \
+		xronos-i-am/AGENTS.md#master \
+		xronos-i-am/agent-diff#v0.17.4 \
+		xronos-i-am/writing-instructions#v0.2.5 \
+		--target claude,opencode,gemini
 	@# 2. Симлинки общих правил для Antigravity и OpenCode
 	ln -sf $(CURDIR)/AGENTS.md $(HOME_DIR)/.gemini/AGENTS.md
 	ln -sf $(CURDIR)/AGENTS.md $(HOME_DIR)/.config/opencode/AGENTS.md
