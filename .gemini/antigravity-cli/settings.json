@@ -1,0 +1,35 @@
+{
+  "agentMode": "auto",
+  "altScreenMode": "always",
+  "model": "Gemini 3.8 Flash (Medium)",
+  "permissions": {
+    "allow": [
+      "command(grep)",
+      "command(cat)",
+      "command(ls)",
+      "command(apm)",
+      "command(head)",
+      "command(git status)",
+      "command(git diff)",
+      "command(git log)",
+      "command(git config)",
+      "command(git checkout)",
+      "command(git commit)",
+      "command(agy)",
+      "command(which)",
+      "command(strings)",
+      "command(ln)",
+      "command(diff)",
+      "command(echo)"
+    ]
+  },
+  "statusLine": {
+    "type": "command",
+    "command": "bash ~/.gemini/statusline-agy.sh"
+  },
+  "trustedWorkspaces": [
+    "/home/dev/projects/gp/admin",
+    "/home/dev/projects/gp",
+    "/home/dev/projects/AGENTS.md"
+  ]
+}
