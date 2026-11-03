@@ -1,0 +1,5 @@
+name: agents-md
+version: 0.1.0
+description: Общие правила агента для всех проектов хоста
+author: Sergei Malykh
+type: instructions
