@@ -12,7 +12,9 @@ install:
 		xronos-i-am/agent-diff#v0.17.4 \
 		xronos-i-am/writing-instructions#v0.2.5 \
 		--target claude,opencode,gemini
-	@# 2. Симлинки общих правил для Antigravity и OpenCode
+	@# 2. Настройки и правила для Antigravity и OpenCode
+	mkdir -p $(HOME_DIR)/.gemini/config
+	ln -sf $(CURDIR)/.gemini/config/skills.json $(HOME_DIR)/.gemini/config/skills.json
 	ln -sf $(CURDIR)/AGENTS.md $(HOME_DIR)/.gemini/AGENTS.md
 	ln -sf $(CURDIR)/AGENTS.md $(HOME_DIR)/.config/opencode/AGENTS.md
 	@# 3. Статуслайны для всех сред
@@ -26,6 +28,7 @@ install:
 	@echo "Установка завершена: правила, настройки и статуслайны активны во всех проектах."
 
 uninstall:
+	rm -f $(HOME_DIR)/.gemini/config/skills.json
 	rm -f $(HOME_DIR)/.gemini/AGENTS.md
 	rm -f $(HOME_DIR)/.config/opencode/AGENTS.md
 	rm -f $(HOME_DIR)/.claude/statusline-command.sh
