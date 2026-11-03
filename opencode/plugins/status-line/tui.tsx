@@ -1,5 +1,9 @@
 import { Plugin } from "@opencode/plugin/tui"
 import { createSignal } from "solid-js"
+import { spawnSync } from "node:child_process"
+import { readFileSync } from "node:fs"
+import { homedir } from "node:os"
+import { join } from "node:path"
 
 function compact(value: number) {
   return Intl.NumberFormat("en-US", {
@@ -27,6 +31,136 @@ function gitStatus(dir) {
     }
   } catch {
     return { branch: undefined, dirty: false }
+  }
+}
+
+// --- 5-часовое окно расхода ---
+const PROVIDER_CALIBRATIONS = {
+  "kimi-code-plan-global": {
+    cache_weight: 0.023083,
+    output_weight: 6.844187,
+    quota_5h_weighted: 1_013_043,
+  },
+  // Добавьте другие провайдеры по мере необходимости
+}
+
+function getWindowUsage(providerID) {
+  const calibration = PROVIDER_CALIBRATIONS[providerID]
+  if (!calibration) return undefined
+
+  try {
+    const dbPath = join(homedir(), ".local/share/opencode/opencode.db")
+    const script = `
+import sqlite3
+import time
+import json
+
+db = sqlite3.connect("file:${dbPath}?mode=ro", uri=True)
+now = time.time()
+now_ms = int(now * 1000)
+five_hours_ms = 5 * 3600 * 1000
+
+# Находим все сессии провайдера, отсортированные по времени создания (от старых к новым)
+sessions = db.execute(
+    """
+    SELECT time_created, time_updated, tokens_input, tokens_output, tokens_cache_read, tokens_cache_write
+    FROM session_v2
+    WHERE json_extract(model, '$.providerID') = ?
+    ORDER BY time_created ASC
+    """,
+    ("${providerID}",),
+).fetchall()
+
+if not sessions:
+    print(json.dumps({"pct": 0, "reset": None, "weighted": 0, "quota": ${calibration.quota_5h_weighted}}))
+    db.close()
+    exit()
+
+# Находим текущее активное окно:
+# Идём от самой старой сессии вперёд, разбивая на окна по 5 часов
+window_start_ms = sessions[0][0]  # Начало первого окна
+window_end_ms = window_start_ms + five_hours_ms
+input_t = 0
+output_t = 0
+cache_read_t = 0
+cache_write_t = 0
+
+for time_created, time_updated, tp_in, tp_out, tp_cread, tp_cwrite in sessions:
+    # Если сессия началась после окончания текущего окна — начинаем новое окно
+    if time_created >= window_end_ms:
+        window_start_ms = time_created
+        window_end_ms = window_start_ms + five_hours_ms
+        input_t = 0
+        output_t = 0
+        cache_read_t = 0
+        cache_write_t = 0
+    
+    # Если сессия в текущем окне — суммируем расход
+    if time_created >= window_start_ms and time_created < window_end_ms:
+        input_t += tp_in or 0
+        output_t += tp_out or 0
+        cache_read_t += tp_cread or 0
+        cache_write_t += tp_cwrite or 0
+
+# Проверяем, активно ли текущее окно
+if now_ms > window_end_ms:
+    # Окно истекло, проверяем, есть ли сессии после окончания окна
+    has_sessions_after_window = any(s[0] >= window_end_ms for s in sessions)
+    if not has_sessions_after_window:
+        # Нет сессий после окна — показываем 0%
+        print(json.dumps({"pct": 0, "reset": None, "weighted": 0, "quota": ${calibration.quota_5h_weighted}}))
+        db.close()
+        exit()
+    else:
+        # Есть сессии после окна — начинаем новое окно с первой такой сессии
+        for time_created, time_updated, tp_in, tp_out, tp_cread, tp_cwrite in sessions:
+            if time_created >= window_end_ms:
+                window_start_ms = time_created
+                window_end_ms = window_start_ms + five_hours_ms
+                input_t = tp_in or 0
+                output_t = tp_out or 0
+                cache_read_t = tp_cread or 0
+                cache_write_t = tp_cwrite or 0
+                break
+        
+        # Суммируем расход для нового окна
+        for time_created, time_updated, tp_in, tp_out, tp_cread, tp_cwrite in sessions:
+            if time_created >= window_start_ms and time_created < window_end_ms:
+                input_t += tp_in or 0
+                output_t += tp_out or 0
+                cache_read_t += tp_cread or 0
+                cache_write_t += tp_cwrite or 0
+
+# Текущее окно активно
+reset_time_ms = window_end_ms
+
+weighted = input_t + ${calibration.cache_weight} * (cache_read_t + cache_write_t) + ${calibration.output_weight} * output_t
+pct = weighted / ${calibration.quota_5h_weighted} * 100
+
+print(json.dumps({
+    "pct": round(pct, 1),
+    "reset": time.strftime("%H:%M", time.localtime(reset_time_ms / 1000)),
+    "weighted": int(weighted),
+    "quota": ${calibration.quota_5h_weighted},
+}))
+db.close()
+
+print(json.dumps({
+    "pct": round(pct, 1),
+    "reset": time.strftime("%H:%M", time.localtime(reset_time_ms / 1000)),
+    "weighted": int(weighted),
+    "quota": ${calibration.quota_5h_weighted},
+}))
+db.close()
+`
+    const result = spawnSync("python3", ["-c", script], {
+      encoding: "utf-8",
+      timeout: 5000,
+    })
+    if (result.status !== 0) return undefined
+    return JSON.parse(result.stdout.trim())
+  } catch {
+    return undefined
   }
 }
 
@@ -73,6 +207,7 @@ export default Plugin.define({
     // --- строка 2: агент · модель · контекст · токены ---
     const interval = setInterval(() => {
       refreshGit()
+      refreshWindowUsage()
       const id = currentSessionID()
       if (id) {
         void context.data.session.sync(id)
@@ -126,7 +261,16 @@ export default Plugin.define({
           (!current?.providerID || m.providerID === current.providerID),
       )
       const limit = found?.limit?.context
-      return limit ? `ctx ${compact(used)} (${Math.round((used / limit) * 100)}%)` : `ctx ${compact(used)}`
+      const text = limit
+        ? `ctx ${compact(used)} (${Math.round((used / limit) * 100)}%)`
+        : `ctx ${compact(used)}`
+      const fg =
+        used >= 300_000
+          ? "#ef4444"
+          : used >= 150_000
+            ? "#eab308"
+            : context.theme.text.muted
+      return { text, fg }
     }
 
     const tokensText = () => {
@@ -151,12 +295,54 @@ export default Plugin.define({
     const agentText = () =>
       (context.ui as any).agent?.current?.()?.id as string | undefined
 
+    // --- 5-часовое окно ---
+    const [windowUsage, setWindowUsage] = createSignal()
+    const refreshWindowUsage = () => {
+      const current = context.ui.model.current()
+      if (!current?.providerID) {
+        setWindowUsage(undefined)
+        return
+      }
+      const usage = getWindowUsage(current.providerID)
+      setWindowUsage(usage)
+    }
+    refreshWindowUsage()
+
+    const windowText = () => {
+      const usage = windowUsage()
+      if (!usage) return undefined
+      const { pct, reset } = usage
+      if (reset === null) return undefined // Окно ещё не открылось
+      const fg =
+        pct >= 90
+          ? "#ef4444"
+          : pct >= 70
+            ? "#eab308"
+            : context.theme.text.muted
+      return { text: `5h ${pct}% → ${reset}`, fg }
+    }
+
     const lineTwo = () => (
       <box flexDirection="row">
         {agentText() ? <text fg="#ffffff">{agentText()}</text> : null}
+        <text fg={context.theme.text.muted}>{agentText() ? " · " : null}</text>
+        {contextText() ? (
+          <text fg={contextText().fg}>{contextText().text}</text>
+        ) : null}
         <text fg={context.theme.text.muted}>
-          {[contextText(), tokensText()].filter(Boolean).join(" · ")}
+          {[contextText(), tokensText()].some(Boolean) && contextText()
+            ? tokensText()
+              ? " · "
+              : null
+            : null}
         </text>
+        {tokensText() ? <text fg={context.theme.text.muted}>{tokensText()}</text> : null}
+        {windowText() ? (
+          <>
+            <text fg={context.theme.text.muted}> · </text>
+            <text fg={windowText().fg}>{windowText().text}</text>
+          </>
+        ) : null}
       </box>
     )
 
