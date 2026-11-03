@@ -9,11 +9,12 @@ install:
 	@# 1. Глобальная установка APM-пакета с правилами и общих скиллов
 	cd $(HOME_DIR)/.apm && apm install -g \
 		xronos-i-am/AGENTS.md#master \
-		xronos-i-am/agent-diff#v0.17.4 \
+		xronos-i-am/agent-diff#v0.17.5 \
 		xronos-i-am/writing-instructions#v0.2.5 \
 		--target claude,opencode,gemini
 	@# 2. Настройки и правила для Antigravity и OpenCode
 	mkdir -p $(HOME_DIR)/.gemini/config
+	@printf '{\n  "entries": [\n    {\n      "path": "%s/.agents/skills"\n    }\n  ]\n}\n' "$(HOME_DIR)" > $(CURDIR)/.gemini/config/skills.json
 	ln -sf $(CURDIR)/.gemini/config/skills.json $(HOME_DIR)/.gemini/config/skills.json
 	ln -sf $(CURDIR)/AGENTS.md $(HOME_DIR)/.gemini/AGENTS.md
 	ln -sf $(CURDIR)/AGENTS.md $(HOME_DIR)/.config/opencode/AGENTS.md
