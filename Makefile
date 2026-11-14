@@ -11,14 +11,13 @@ KIT := apm_modules/xronos-i-am/skill-kit/kit
 .PHONY: install uninstall setup release
 
 # После клона и правки правил: ставит apm и lefthook из mise.toml, skill-kit и dev-скиллы,
-# поднимает версию kit в apm.yml и версии проверок в lefthook.yml до последних тегов и ставит хуки
+# поднимает версию kit в apm.yml до последнего тега и ставит хуки
 setup:
 	@command -v mise >/dev/null || { echo "make setup: нет mise — поставьте его: https://mise.jdx.dev/getting-started.html" >&2; exit 1; }
 	mise trust --quiet
 	mise install
 	apm install
 	$(KIT)/bump-kit.sh
-	$(APM_GLOBAL_ENV) $(KIT)/bump-remotes.sh
 	lefthook install
 
 # make release [minor|major] — по умолчанию patch; слово после release уходит в release.sh, и он

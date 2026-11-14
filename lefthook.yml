@@ -1,8 +1,2 @@
 extends:
   - apm_modules/xronos-i-am/skill-kit/kit/lefthook.yml
-
-remotes:
-  - git_url: git@github.com:xronos-i-am/writing-instructions
-    ref: v0.2.9
-    configs:
-      - lefthook-remote.yml
