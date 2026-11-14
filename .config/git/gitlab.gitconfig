@@ -1,0 +1,10 @@
+# Подключается в ~/.gitconfig через include.path командой make install.
+# apm ходит в gitlab по https, даже когда в apm.yml записан ssh: без логина по https git ls-remote
+# падает, и apm outdated молча показывает зависимость как unknown. Логин даёт токен glab, как gh для GitHub;
+# пустой helper сбрасывает помощников, заданных раньше
+[credential "https://gitlab.groupprice.ru"]
+	helper =
+	helper = !glab auth git-credential
+[credential "https://gitlab.com"]
+	helper =
+	helper = !glab auth git-credential

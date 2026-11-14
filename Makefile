@@ -34,6 +34,9 @@ install:
 	@# 1. Глобальная установка APM-пакетов из ~/.apm/apm.yml. Версии скиллов там двигают их релизы
 	@# (make release в репозитории скилла), поэтому здесь они не закрепляются; пакет этого
 	@# репозитория ставится последним выпущенным тегом, а скиллы приходят своим make install
+	@# Логин glab для https gitlab.groupprice.ru и gitlab.com до apm install: apm ходит в gitlab по https и без логина не видит теги
+	@command -v glab >/dev/null || echo "make install: нет glab в PATH — apm не увидит теги gitlab: поставьте glab и войдите glab auth login" >&2
+	git config --global --replace-all include.path $(CURDIR)/.config/git/gitlab.gitconfig '/\.config/git/gitlab\.gitconfig$$'
 	mkdir -p $(HOME_DIR)/.apm
 	cd $(HOME_DIR)/.apm && $(APM_GLOBAL_ENV) apm install -g --target $(APM_TARGETS)
 	@tag=$$(git ls-remote --tags --sort=-v:refname origin 'v*' | sed -n '1s#.*refs/tags/\(v[^^]*\).*#\1#p'); \
@@ -68,4 +71,5 @@ uninstall:
 	rm -f $(HOME_DIR)/.gemini/statusline-agy.sh
 	rm -f $(HOME_DIR)/.claude/settings.json
 	rm -f $(HOME_DIR)/.config/opencode/plugins/status-line
+	git config --global --unset-all include.path '/\.config/git/gitlab\.gitconfig$$' || true
 	@echo "Симлинки удалены. Для удаления из APM выполните: apm deps remove agents-md -g"

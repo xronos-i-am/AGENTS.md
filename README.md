@@ -18,7 +18,8 @@ make install
 ### Что делает команда:
 
 1. **Ставит APM-пакеты на уровне пользователя:**
-   Выполняет `apm install -g` в `~/.apm` с `CLAUDE_CONFIG_DIR=~/.claude-profiles/shared`: `apm` не пишет скиллы сквозь симлинк `~/.claude/skills`, и профиль Claude берёт их из `shared`. Версии скиллов в `~/.apm/apm.yml` двигают их релизы. Пакет этого репозитория ставится последним выпущенным тегом `vX.Y.Z`, а правила попадают в `~/.claude-profiles/shared/rules/agents.md`.
+   Сначала подключает `.config/git/gitlab.gitconfig` в `include.path` файла `~/.gitconfig`: файл даёт git логин для `https://gitlab.groupprice.ru` и `https://gitlab.com` из токена `glab`, как `gh` для GitHub. `apm` ходит в gitlab по https, даже когда в `apm.yml` записан ssh. Без логина `git ls-remote` падает, и `apm outdated` молча показывает зависимость как `unknown`. Нужен `glab` с входом на каждый хост: `glab auth login --hostname <хост>`.
+   Затем выполняет `apm install -g` в `~/.apm` с `CLAUDE_CONFIG_DIR=~/.claude-profiles/shared`: `apm` не пишет скиллы сквозь симлинк `~/.claude/skills`, и профиль Claude берёт их из `shared`. Версии скиллов в `~/.apm/apm.yml` двигают их релизы. Пакет этого репозитория ставится последним выпущенным тегом `vX.Y.Z`, а правила попадают в `~/.claude-profiles/shared/rules/agents.md`.
    Затем обновляет эталон настроек Antigravity из `~/.gemini/antigravity-cli/settings.json` скриптом `.gemini/sync-antigravity-settings.sh`: в копию в репозитории не попадают `trustedWorkspaces` и абсолютные пути.
 2. **Связывает правила для остальных сред:**
    - Создаёт симлинк `~/.gemini/AGENTS.md` -> `AGENTS.md` (действует во всех проектах Google Antigravity).
@@ -70,6 +71,7 @@ apm deps remove agents-md -g
 - `.claude/statusline-command.sh` — скрипт статусной строки для Claude Code.
 - `.gemini/statusline-agy.sh` — скрипт статусной строки для Antigravity CLI (`agy`).
 - `opencode/plugins/status-line/` — плагин статусной строки для OpenCode.
+- `.config/git/gitlab.gitconfig` — логин glab для https gitlab, подключается в `~/.gitconfig`.
 - `.gemini/sync-antigravity-settings.sh` — обновляет эталон настроек Antigravity из системного файла без личных путей.
 - `Makefile` — команды установки, разработки и выпуска версий.
 - `apm.yml`, `mise.toml`, `lefthook.yml`, `.config/wt.toml` — обвязка skill-kit: зависимости, инструменты, git-хуки и worktree для `/task`.
