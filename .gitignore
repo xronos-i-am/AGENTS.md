@@ -10,3 +10,5 @@ apm.lock.yaml
 .opencode/
 .claude/rules/
 .claude/skills/
+.claude/hooks/
+.claude/apm-hooks.json
