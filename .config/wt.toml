@@ -1,9 +1,3 @@
-# Хуки и алиасы worktrunk репозитория скилла. Источник — kit/wt.toml в skill-kit: sync-kit-files.sh копирует его в .config/wt.toml репозитория скилла.
-# wt land вливает ветку worktree в ветку основного чекаута одним коммитом, а не в ветку по умолчанию:
-#   wt -y land --message='<сообщение>' -- --branch <ветка worktree>
-# У wt merge нет -m: сообщение пишет внешняя команда commit.generation.command, и алиас задаёт её
-# переменной окружения на свой вызов. Само сообщение идёт отдельной переменной, чтобы $… и обратные
-# кавычки из него не раскрыл shell.
 [aliases]
 land = '''
 target=$(git -C {{ primary_worktree_path }} branch --show-current)
@@ -13,8 +7,6 @@ WORKTRUNK_COMMIT__GENERATION__COMMAND='cat >/dev/null; printf %s "$WT_LAND_MESSA
 wt merge "$target" {{ args }}
 '''
 
-# worktrunk запускает хук сам, в каком бы харнессе ни работал агент. apm_modules в .gitignore, и в свежем
-# worktree его нет: без симлинка extends в lefthook.yml ведёт в пустоту, и git коммитит без хуков kit
 [pre-start]
 apm_modules = '''
 [ -d {{ primary_worktree_path }}/apm_modules ] || { echo "в {{ primary_worktree_path }} нет apm_modules — запусти там make setup" >&2; exit 1; }

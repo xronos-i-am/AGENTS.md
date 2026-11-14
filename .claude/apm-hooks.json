@@ -1,0 +1,14 @@
+{
+  "SessionStart": [
+    {
+      "matcher": "*",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "\"${CLAUDE_PROJECT_DIR}/.claude/hooks/outdated-skills/outdated-deps.sh\""
+        }
+      ],
+      "_apm_source": "xronos-i-am/outdated-skills"
+    }
+  ]
+}

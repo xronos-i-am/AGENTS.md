@@ -8,7 +8,7 @@ type: instructions
 devDependencies:
   apm:
     - git: xronos-i-am/skill-kit
-      ref: v0.3.14
+      ref: v0.3.16
     - git: xronos-i-am/skill-kit
-      ref: v0.3.14
+      ref: v0.3.16
       path: dev-skills

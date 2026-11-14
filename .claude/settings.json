@@ -42,5 +42,18 @@
   },
   "autoMemoryEnabled": false,
   "theme": "dark",
-  "voiceEnabled": true
+  "voiceEnabled": true,
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PROJECT_DIR}/.claude/hooks/outdated-skills/outdated-deps.sh\""
+          }
+        ]
+      }
+    ]
+  }
 }
