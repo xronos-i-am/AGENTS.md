@@ -4,6 +4,11 @@
     "pr": ""
   },
   "permissions": {
+    "allow": [
+      "Bash(ruff format:*)",
+      "Bash(ruff check --fix:*)",
+      "Bash(biome check --write:*)"
+    ],
     "defaultMode": "auto"
   },
   "model": "opus",
