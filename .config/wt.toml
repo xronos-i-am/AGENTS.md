@@ -1,4 +1,4 @@
-# Хуки и алиасы worktrunk репозитория скилла. Источник — .apm/skills/skill-kit/wt.toml в skill-kit: new-skill.sh копирует его в заготовку.
+# Хуки и алиасы worktrunk репозитория скилла. Источник — kit/wt.toml в skill-kit: sync-kit-files.sh копирует его в .config/wt.toml репозитория скилла.
 # wt land вливает ветку worktree в ветку основного чекаута одним коммитом, а не в ветку по умолчанию:
 #   wt -y land --message='<сообщение>' -- --branch <ветка worktree>
 # У wt merge нет -m: сообщение пишет внешняя команда commit.generation.command, и алиас задаёт её
