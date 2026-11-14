@@ -1,0 +1,12 @@
+# в worktree apm_modules — симлинк, а образец со слешем, который ждёт apm install, ловит только каталог
+apm_modules/
+apm_modules
+# Lock-файл хранит хеши развёрнутой копии своего пакета и меняется с каждой его правкой
+apm.lock.yaml
+# worktree задач /task
+.worktrees/
+# Собирает make setup из зависимостей и .apm/; в .claude/ отслеживаются только settings.json и statusline-command.sh
+.agents/
+.opencode/
+.claude/rules/
+.claude/skills/

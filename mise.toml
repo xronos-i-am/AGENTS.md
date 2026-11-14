@@ -1,0 +1,6 @@
+# make setup ставит отсюда через mise install: apm — skill-kit и dev-скиллы, lefthook — хуки kit и проверки remotes,
+# worktrunk — worktree и wt land скилла task
+[tools]
+apm = "0.35"
+lefthook = "2"
+"github:max-sixty/worktrunk" = "0.81"

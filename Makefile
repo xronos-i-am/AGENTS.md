@@ -5,19 +5,44 @@ HOME_DIR := $(HOME)
 # а сквозь симлинк apm не пишет (Unsafe skill destination), поэтому ставит прямо в реальный каталог
 APM_GLOBAL_ENV := CLAUDE_CONFIG_DIR=$(HOME_DIR)/.claude-profiles/shared
 APM_TARGETS := claude,opencode,gemini
+# Обвязка разработки приходит из skill-kit той версии, что записана в apm.yml
+KIT := apm_modules/xronos-i-am/skill-kit/kit
 
-.PHONY: install uninstall
+.PHONY: install uninstall setup release
+
+# После клона и правки правил: ставит apm и lefthook из mise.toml, skill-kit и dev-скиллы,
+# поднимает версию kit в apm.yml и версии проверок в lefthook.yml до последних тегов и ставит хуки
+setup:
+	@command -v mise >/dev/null || { echo "make setup: нет mise — поставьте его: https://mise.jdx.dev/getting-started.html" >&2; exit 1; }
+	mise trust --quiet
+	mise install
+	apm install
+	$(KIT)/bump-kit.sh
+	$(APM_GLOBAL_ENV) $(KIT)/bump-remotes.sh
+	lefthook install
+
+# make release [minor|major] — по умолчанию patch; слово после release уходит в release.sh, и он
+# проверяет его до выпуска, а не make — после
+ifeq (release,$(firstword $(MAKECMDGOALS)))
+  RELEASE_PART := $(wordlist 2,$(words $(MAKECMDGOALS)),$(MAKECMDGOALS))
+  $(eval $(RELEASE_PART):;@:)
+endif
+release:
+	$(KIT)/release.sh $(RELEASE_PART)
 
 install:
 	@command -v apm >/dev/null || { echo "make install: нет apm в PATH — установите apm" >&2; exit 1; }
 	@# 1. Глобальная установка APM-пакетов из ~/.apm/apm.yml. Версии скиллов там двигают их релизы
-	@# (make release в репозитории скилла), поэтому здесь они не закрепляются; без файла ставится
-	@# только пакет этого репозитория, а скиллы приходят своим make install
+	@# (make release в репозитории скилла), поэтому здесь они не закрепляются; пакет этого
+	@# репозитория ставится последним выпущенным тегом, а скиллы приходят своим make install
 	mkdir -p $(HOME_DIR)/.apm
-	cd $(HOME_DIR)/.apm && { [ -f apm.yml ] || $(APM_GLOBAL_ENV) apm install -g --target $(APM_TARGETS) xronos-i-am/AGENTS.md#master; }
 	cd $(HOME_DIR)/.apm && $(APM_GLOBAL_ENV) apm install -g --target $(APM_TARGETS)
-	@# master не двигается сам: ref закреплён в apm.lock.yaml на коммите прошлой установки
-	cd $(HOME_DIR)/.apm && $(APM_GLOBAL_ENV) apm update -g --yes --target $(APM_TARGETS) xronos-i-am/AGENTS.md
+	@tag=$$(git ls-remote --tags --sort=-v:refname origin 'v*' | sed -n '1s#.*refs/tags/\(v[^^]*\).*#\1#p'); \
+	if [ -n "$$tag" ]; then \
+		cd $(HOME_DIR)/.apm && $(APM_GLOBAL_ENV) apm install -g --target $(APM_TARGETS) xronos-i-am/AGENTS.md#$$tag; \
+	else \
+		echo "make install: у origin нет тега vX.Y.Z — правила остались как в ~/.apm/apm.yml, выпустите версию: make release" >&2; \
+	fi
 	@# Эталон настроек Antigravity: источник правды — системный файл, в репозиторий идёт копия без личных путей
 	$(CURDIR)/.gemini/sync-antigravity-settings.sh
 	@# 2. Настройки и правила для Antigravity и OpenCode

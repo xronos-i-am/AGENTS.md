@@ -3,3 +3,9 @@ version: 0.1.0
 description: Общие правила агента для всех проектов хоста
 author: Sergei Malykh
 type: instructions
+# Обвязка разработки: dev-скиллы, git-хуки и выпуск версии приходят из skill-kit;
+# установка пакета в другие проекты и apm pack их не берут
+devDependencies:
+  apm:
+    - git: xronos-i-am/skill-kit
+      ref: v0.3.12
