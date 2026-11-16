@@ -28,6 +28,7 @@ ifeq (release,$(firstword $(MAKECMDGOALS)))
 endif
 release:
 	$(KIT)/release.sh $(RELEASE_PART)
+	$(MAKE) --no-print-directory install
 
 install:
 	@command -v apm >/dev/null || { echo "make install: нет apm в PATH — установите apm" >&2; exit 1; }
