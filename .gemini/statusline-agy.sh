@@ -1,7 +1,7 @@
 #!/bin/bash
 # Status line script for Antigravity CLI (agy), Claude Code and compatible agents.
 # Formats:
-#   <dir> <branch><*> [model] | ctx:<tokens> [(session:<tokens>)] | 5ч:<%> до <time> | 7д:<%> до <date>
+#   <dir> <branch><*> | <model> [<mode>] | ctx:<tokens> | 5ч:<%> до <time> | 7д:<%> до <date>
 
 export LC_NUMERIC=C
 
@@ -43,7 +43,7 @@ if [ -n "$git_branch" ]; then
   [ -n "$is_dirty" ] && printf '\033[33m*\033[00m'
 fi
 
-# 3. Модель сессии (если передана)
+# 3. Модель сессии и текущий режим работы (plan/auto/accept-edits/default)
 model=$(echo "$input" | jq -r '.model.display_name // .model.id // empty' 2>/dev/null)
 effort=$(echo "$input" | jq -r '.effort.level // .model.effort // empty' 2>/dev/null)
 if [ -n "$model" ] && [ -n "$effort" ]; then
@@ -52,7 +52,30 @@ if [ -n "$model" ] && [ -n "$effort" ]; then
     model="$model ($effort)"
   fi
 fi
-[ -n "$model" ] && printf ' \033[02m| %s\033[00m' "$model"
+
+mode=$(echo "$input" | jq -r '.cycle_mode // .permission_mode // .mode // empty' 2>/dev/null)
+[ -z "$mode" ] && mode="default"
+case "$mode" in
+  plan)
+    mode_color='\033[36m'
+    ;;
+  auto)
+    mode_color='\033[32m'
+    ;;
+  accept-edits|acceptEdits)
+    mode="accept-edits"
+    mode_color='\033[33m'
+    ;;
+  *)
+    mode_color='\033[02m'
+    ;;
+esac
+
+if [ -n "$model" ]; then
+  printf " \\033[02m| %s\\033[00m ${mode_color}[%s]\\033[00m" "$model" "$mode"
+else
+  printf " \\033[02m|\\033[00m ${mode_color}[%s]\\033[00m" "$mode"
+fi
 
 # 4. Размер израсходованного контекста (входные токены последнего шага)
 conv_id=$(echo "$input" | jq -r '.conversation_id // .session_id // empty' 2>/dev/null)
