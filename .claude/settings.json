@@ -11,7 +11,7 @@
     ],
     "defaultMode": "auto"
   },
-  "model": "sonnet",
+  "model": "opus",
   "skillOverrides": {
     "anthropic-skills:built-in-browser": "off",
     "anthropic-skills:chrome-browser": "off",
@@ -25,6 +25,20 @@
     "anthropic-skills:pdf": "off",
     "anthropic-skills:pptx": "off",
     "anthropic-skills:xlsx": "off"
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|clear",
+        "hooks": [
+          {
+            "type": "command",
+            "async": true,
+            "command": "\"${CLAUDE_PROJECT_DIR}/.claude/hooks/outdated-skills/outdated-deps.sh\""
+          }
+        ]
+      }
+    ]
   },
   "statusLine": {
     "type": "command",
@@ -42,18 +56,5 @@
   },
   "autoMemoryEnabled": false,
   "theme": "dark",
-  "voiceEnabled": true,
-  "hooks": {
-    "SessionStart": [
-      {
-        "matcher": "*",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "\"${CLAUDE_PROJECT_DIR}/.claude/hooks/outdated-skills/outdated-deps.sh\""
-          }
-        ]
-      }
-    ]
-  }
+  "voiceEnabled": true
 }
