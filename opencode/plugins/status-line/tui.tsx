@@ -174,8 +174,27 @@ export default Plugin.define({
       return { current, found }
     }
 
-    // длина диалога = реальный размер контекста на последнем ходе модели
-    // (из токенов последнего assistant-сообщения, не накопительное)
+    // Стоимость текущей сессии: session.cost у моделей OpenCode Go равен 0 —
+    // подписка не списывает деньги за токены, поэтому считаем оценку по прайсу модели.
+    const sessionCost = (id: string) => {
+      const session = context.data.session.get(id)
+      const tokens = session?.tokens
+      const price = currentModel().found?.cost?.[0]
+      let cost = 0
+      if (tokens && price) {
+        cost =
+          ((tokens.input ?? 0) * (price.input ?? 0) +
+            ((tokens.output ?? 0) + (tokens.reasoning ?? 0)) *
+              (price.output ?? 0) +
+            (tokens.cache?.read ?? 0) * (price.cache?.read ?? 0) +
+            (tokens.cache?.write ?? 0) * (price.cache?.write ?? 0)) /
+          1_000_000
+      }
+      if (!cost) cost = session?.cost ?? context.data.session.cost(id) ?? 0
+      return cost
+    }
+
+    // Контекст последнего хода и стоимость сессии рядом: ctx:12k ($0.1108).
     let lastContextUsed: number | undefined
     const contextText = () => {
       const id = currentSessionID()
@@ -204,18 +223,15 @@ export default Plugin.define({
         if (!used) return undefined
       }
 
-      const { found } = currentModel()
-      const limit = found?.limit?.context
-      const text = limit
-        ? `ctx:${compact(used)} (${Math.round((used / limit) * 100)}%)`
-        : `ctx:${compact(used)}`
+      const cost = sessionCost(id)
+      const costText = cost ? ` ($${cost.toFixed(4)})` : ""
       const fg =
         used >= 300_000
           ? "#ef4444"
           : used >= 150_000
             ? "#eab308"
             : context.theme.text.muted
-      return { text, fg }
+      return { text: `ctx:${compact(used)}${costText}`, fg }
     }
 
     // --- текущий агент и модель ---
