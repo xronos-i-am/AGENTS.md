@@ -1,23 +1,17 @@
 {
-  "agentMode": "auto",
   "allowNonWorkspaceAccess": true,
   "altScreenMode": "always",
-  "model": "Gemini 4 Hydrogen (High)",
+  "model": "Claude Sonnet 5.5 (Low)",
   "permissions": {
     "allow": [
       "command(apm)",
-      "command(git)",
-      "command(glab)",
-      "command(regex:(python3\\s+|bash\\s+)?(\\./)?(.*\\/)?(agent-diff|\\.apm|apm_modules)/.*)",
-      "command(gh)",
-      "command(.agents/skills/task/land.sh)",
-      "command(.agents/skills/ptask-api/scripts/get_task.sh)",
-      "command(.agents/skills/tracer-api/scripts/fetch.sh)",
-      "command(.agents/skills/ptask-api/scripts/post_comment.sh)",
-      "command(.agents/skills/ptask-api/scripts/me.sh)",
-      "command(.agents/skills/ptask-api/scripts/create_task.sh)",
-      "command(.agents/skills/ptask-api/scripts/update_task.sh)",
-      "command(./agent-kit/skills/tracer-api/scripts/fetch.sh)"
+      "command(regex:^(python3\\s+|bash\\s+|sh\\s+)?([^\\s;&|]+/)?(agent-diff|\\.apm|apm_modules|\\.agents/skills|agent-kit/skills)/[^\\s;&|]+(\\s+.*)?$)",
+      "command(wt)",
+      "command(make setup)",
+      "command(make release)",
+      "command(ls)",
+      "command(make test)",
+      "command(git add)"
     ]
   },
   "showTips": false,
