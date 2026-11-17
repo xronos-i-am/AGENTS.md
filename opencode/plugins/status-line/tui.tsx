@@ -1,9 +1,5 @@
 import { Plugin } from "@opencode/plugin/tui"
-import { createSignal } from "solid-js"
-import { spawnSync } from "node:child_process"
-import { readFileSync } from "node:fs"
-import { homedir } from "node:os"
-import { join } from "node:path"
+import { createSignal, For } from "solid-js"
 
 function compact(value: number) {
   return Intl.NumberFormat("en-US", {
@@ -34,135 +30,24 @@ function gitStatus(dir) {
   }
 }
 
-// --- 5-часовое окно расхода ---
-const PROVIDER_CALIBRATIONS = {
-  "kimi-code-plan-global": {
-    cache_weight: 0.023083,
-    output_weight: 6.844187,
-    quota_5h_weighted: 1_013_043,
-  },
-  // Добавьте другие провайдеры по мере необходимости
+function twoDigits(value: number) {
+  return String(value).padStart(2, "0")
 }
 
-function getWindowUsage(providerID) {
-  const calibration = PROVIDER_CALIBRATIONS[providerID]
-  if (!calibration) return undefined
-
-  try {
-    const dbPath = join(homedir(), ".local/share/opencode/opencode.db")
-    const script = `
-import sqlite3
-import time
-import json
-
-db = sqlite3.connect("file:${dbPath}?mode=ro", uri=True)
-now = time.time()
-now_ms = int(now * 1000)
-five_hours_ms = 5 * 3600 * 1000
-
-# Находим все сессии провайдера, отсортированные по времени создания (от старых к новым)
-sessions = db.execute(
-    """
-    SELECT time_created, time_updated, tokens_input, tokens_output, tokens_cache_read, tokens_cache_write
-    FROM session_v2
-    WHERE json_extract(model, '$.providerID') = ?
-    ORDER BY time_created ASC
-    """,
-    ("${providerID}",),
-).fetchall()
-
-if not sessions:
-    print(json.dumps({"pct": 0, "reset": None, "weighted": 0, "quota": ${calibration.quota_5h_weighted}}))
-    db.close()
-    exit()
-
-# Находим текущее активное окно:
-# Идём от самой старой сессии вперёд, разбивая на окна по 5 часов
-window_start_ms = sessions[0][0]  # Начало первого окна
-window_end_ms = window_start_ms + five_hours_ms
-input_t = 0
-output_t = 0
-cache_read_t = 0
-cache_write_t = 0
-
-for time_created, time_updated, tp_in, tp_out, tp_cread, tp_cwrite in sessions:
-    # Если сессия началась после окончания текущего окна — начинаем новое окно
-    if time_created >= window_end_ms:
-        window_start_ms = time_created
-        window_end_ms = window_start_ms + five_hours_ms
-        input_t = 0
-        output_t = 0
-        cache_read_t = 0
-        cache_write_t = 0
-    
-    # Если сессия в текущем окне — суммируем расход
-    if time_created >= window_start_ms and time_created < window_end_ms:
-        input_t += tp_in or 0
-        output_t += tp_out or 0
-        cache_read_t += tp_cread or 0
-        cache_write_t += tp_cwrite or 0
-
-# Проверяем, активно ли текущее окно
-if now_ms > window_end_ms:
-    # Окно истекло, проверяем, есть ли сессии после окончания окна
-    has_sessions_after_window = any(s[0] >= window_end_ms for s in sessions)
-    if not has_sessions_after_window:
-        # Нет сессий после окна — показываем 0%
-        print(json.dumps({"pct": 0, "reset": None, "weighted": 0, "quota": ${calibration.quota_5h_weighted}}))
-        db.close()
-        exit()
-    else:
-        # Есть сессии после окна — начинаем новое окно с первой такой сессии
-        for time_created, time_updated, tp_in, tp_out, tp_cread, tp_cwrite in sessions:
-            if time_created >= window_end_ms:
-                window_start_ms = time_created
-                window_end_ms = window_start_ms + five_hours_ms
-                input_t = tp_in or 0
-                output_t = tp_out or 0
-                cache_read_t = tp_cread or 0
-                cache_write_t = tp_cwrite or 0
-                break
-        
-        # Суммируем расход для нового окна
-        for time_created, time_updated, tp_in, tp_out, tp_cread, tp_cwrite in sessions:
-            if time_created >= window_start_ms and time_created < window_end_ms:
-                input_t += tp_in or 0
-                output_t += tp_out or 0
-                cache_read_t += tp_cread or 0
-                cache_write_t += tp_cwrite or 0
-
-# Текущее окно активно
-reset_time_ms = window_end_ms
-
-weighted = input_t + ${calibration.cache_weight} * (cache_read_t + cache_write_t) + ${calibration.output_weight} * output_t
-pct = weighted / ${calibration.quota_5h_weighted} * 100
-
-print(json.dumps({
-    "pct": round(pct, 1),
-    "reset": time.strftime("%H:%M", time.localtime(reset_time_ms / 1000)),
-    "weighted": int(weighted),
-    "quota": ${calibration.quota_5h_weighted},
-}))
-db.close()
-
-print(json.dumps({
-    "pct": round(pct, 1),
-    "reset": time.strftime("%H:%M", time.localtime(reset_time_ms / 1000)),
-    "weighted": int(weighted),
-    "quota": ${calibration.quota_5h_weighted},
-}))
-db.close()
-`
-    const result = spawnSync("python3", ["-c", script], {
-      encoding: "utf-8",
-      timeout: 5000,
-    })
-    if (result.status !== 0) return undefined
-    return JSON.parse(result.stdout.trim())
-  } catch {
-    return undefined
-  }
+// 5-часовое окно заканчивается в тот же или следующий день, ему хватает времени.
+// Недельное и месячное показываем с датой, как в статуслайнах agy и Claude Code.
+function formatReset(ms: number, withDate: boolean) {
+  const date = new Date(ms)
+  const time = `${twoDigits(date.getHours())}:${twoDigits(date.getMinutes())}`
+  if (!withDate) return time
+  return `${twoDigits(date.getDate())}.${twoDigits(date.getMonth() + 1)} ${time}`
 }
+
+function capitalize(value: string) {
+  return value.charAt(0).toUpperCase() + value.slice(1)
+}
+
+type Segment = { text: string; fg: string }[]
 
 export default Plugin.define({
   id: "status-line",
@@ -192,22 +77,76 @@ export default Plugin.define({
     const dirText = () =>
       context.ui.format.path(location?.directory ?? "").replace(/^~\/projects\//, "")
 
-    const line1 = () => (
-      <box flexDirection="row">
-        <text fg="#3b82f6">
-          {dirText()}
-        </text>
-        <text fg={context.theme.text.muted}>
-          {branch() ? ` | ⎇  ${branch()}` : null}
-        </text>
-        {branch() && dirty() ? <text fg="#eab308">{" *"}</text> : null}
-      </box>
+    const dirSegment = (): Segment => {
+      const chunks: Segment = [{ text: dirText(), fg: "#3b82f6" }]
+      if (branch()) {
+        chunks.push({ text: ` ⎇  ${branch()}`, fg: context.theme.text.muted })
+      }
+      if (branch() && dirty()) chunks.push({ text: " *", fg: "#eab308" })
+      return chunks
+    }
+
+    const renderChunks = (chunks: Segment) => (
+      <For each={chunks}>
+        {(chunk) => <text fg={chunk.fg}>{chunk.text}</text>}
+      </For>
     )
 
-    // --- строка 2: агент · модель · контекст · токены ---
+    const line1 = () => <box flexDirection="row">{renderChunks(dirSegment())}</box>
+
+    // --- лимиты OpenCode Go из Console ---
+    // Проценты и время сброса приходят из /api/experimental/usage/limits.
+    // Данные общие для location, поэтому синкаем их не чаще раза в минуту,
+    // а читаем из кэша на каждом тике интерфейса.
+    const [usageInfo, setUsageInfo] = createSignal<any>()
+    let lastUsageSync = 0
+
+    const refreshUsage = () => {
+      const providerID = context.ui.model.current()?.providerID
+      if (providerID !== "opencode-go" || !location) {
+        setUsageInfo(undefined)
+        return
+      }
+      const usage = context.data.location.usage
+      if (!usage) return
+      if (Date.now() - lastUsageSync >= 60_000) {
+        lastUsageSync = Date.now()
+        void Promise.resolve(usage.sync(location)).catch(() => {})
+      }
+      setUsageInfo(usage.limits(location))
+    }
+    refreshUsage()
+
+    const limitColor = (pct: number) =>
+      pct >= 90
+        ? "#ef4444"
+        : pct >= 70
+          ? "#eab308"
+          : context.theme.text.muted
+
+    const goLimitParts = () => {
+      if (context.ui.model.current()?.providerID !== "opencode-go") return []
+      const go = usageInfo()?.go
+      if (!go) return []
+
+      return [
+        { label: "5ч", meter: go.rolling, withDate: false },
+        { label: "7д", meter: go.weekly, withDate: true },
+      ]
+        .filter(({ meter }) => meter)
+        .map(({ label, meter, withDate }) => {
+          const pct = Math.round(meter.percent)
+          return {
+            text: `${label}:${pct}% до ${formatReset(meter.resetsAt, withDate)}`,
+            fg: limitColor(pct),
+          }
+        })
+    }
+
+    // --- обновление раз в 2 секунды; лимиты синкаем не чаще раза в минуту ---
     const interval = setInterval(() => {
       refreshGit()
-      refreshWindowUsage()
+      refreshUsage()
       const id = currentSessionID()
       if (id) {
         void context.data.session.sync(id)
@@ -215,6 +154,26 @@ export default Plugin.define({
       }
     }, 2000)
     await context.data.location.model.sync(location)
+
+    const currentModel = () => {
+      const current = context.ui.model.current()
+      const models = context.data.location.model.list(location) ?? []
+      const flat = models.flatMap((entry) =>
+        entry?.models
+          ? Object.values(entry.models).map((m) => ({
+              ...m,
+              providerID: entry.providerID ?? entry.id,
+            }))
+          : [entry],
+      )
+      const found = flat.find(
+        (m) =>
+          (m.id === current?.modelID || m.modelID === current?.modelID) &&
+          (!current?.providerID || m.providerID === current.providerID),
+      )
+      return { current, found }
+    }
+
     // длина диалога = реальный размер контекста на последнем ходе модели
     // (из токенов последнего assistant-сообщения, не накопительное)
     let lastContextUsed: number | undefined
@@ -245,25 +204,11 @@ export default Plugin.define({
         if (!used) return undefined
       }
 
-      const current = context.ui.model.current()
-      const models = context.data.location.model.list(location) ?? []
-      const flat = models.flatMap((entry) =>
-        entry?.models
-          ? Object.values(entry.models).map((m) => ({
-              ...m,
-              providerID: entry.providerID ?? entry.id,
-            }))
-          : [entry],
-      )
-      const found = flat.find(
-        (m) =>
-          (m.id === current?.modelID || m.modelID === current?.modelID) &&
-          (!current?.providerID || m.providerID === current.providerID),
-      )
+      const { found } = currentModel()
       const limit = found?.limit?.context
       const text = limit
-        ? `ctx ${compact(used)} (${Math.round((used / limit) * 100)}%)`
-        : `ctx ${compact(used)}`
+        ? `ctx:${compact(used)} (${Math.round((used / limit) * 100)}%)`
+        : `ctx:${compact(used)}`
       const fg =
         used >= 300_000
           ? "#ef4444"
@@ -273,88 +218,68 @@ export default Plugin.define({
       return { text, fg }
     }
 
-    const tokensText = () => {
-      const id = currentSessionID()
-      if (!id) return undefined
-      const session = context.data.session.get(id)
-      const t = session?.tokens
-      const cost = session?.cost ?? context.data.session.cost(id)
-      if (!t && !cost) return undefined
-      const parts = []
-      if (t) {
-        parts.push(`↑${compact(t.input ?? 0)}`)
-        parts.push(`↓${compact((t.output ?? 0) + (t.reasoning ?? 0))}`)
-        const cacheRead = t.cache?.read ?? 0
-        if (cacheRead > 0) parts.push(`cache ${compact(cacheRead)}`)
-      }
-      if (cost) parts.push(`$${cost.toFixed(4)}`)
-      return parts.join(" ")
-    }
-
-    // --- текущий агент ---
+    // --- текущий агент и модель ---
     const agentText = () =>
       (context.ui as any).agent?.current?.()?.id as string | undefined
 
-    // --- 5-часовое окно ---
-    const [windowUsage, setWindowUsage] = createSignal()
-    const refreshWindowUsage = () => {
-      const current = context.ui.model.current()
-      if (!current?.providerID) {
-        setWindowUsage(undefined)
-        return
+    const agentColor = (agent: string) =>
+      agent === "plan"
+        ? "#22d3ee"
+        : agent === "build"
+          ? "#22c55e"
+          : context.theme.text.muted
+
+    const modelText = () => {
+      const { current, found } = currentModel()
+      if (!current?.modelID) return undefined
+      const name = found?.name ?? current.modelID
+      const variant = current.variant ? ` (${capitalize(current.variant)})` : ""
+      return { text: `${name}${variant}`, fg: "#ffffff" }
+    }
+
+    // Сегменты строки: модель с агентом не разрываем разделителем,
+    // как «Claude Sonnet 5.5 (Low) [auto]» в статуслайне agy.
+    const lineSegments = () => {
+      const segments: Segment[] = []
+      const title: Segment = []
+      const model = modelText()
+      if (model) title.push(model)
+      const agent = agentText()
+      if (agent) {
+        title.push({
+          text: `${model ? " " : ""}[${agent}]`,
+          fg: agentColor(agent),
+        })
       }
-      const usage = getWindowUsage(current.providerID)
-      setWindowUsage(usage)
-    }
-    refreshWindowUsage()
+      if (title.length) segments.push(title)
 
-    const windowText = () => {
-      const usage = windowUsage()
-      if (!usage) return undefined
-      const { pct, reset } = usage
-      if (reset === null) return undefined // Окно ещё не открылось
-      const fg =
-        pct >= 90
-          ? "#ef4444"
-          : pct >= 70
-            ? "#eab308"
-            : context.theme.text.muted
-      return { text: `5h ${pct}% → ${reset}`, fg }
+      const ctx = contextText()
+      if (ctx) segments.push([ctx])
+
+      for (const limit of goLimitParts()) segments.push([limit])
+      return segments
     }
 
-    const lineTwo = () => (
-      <box flexDirection="row">
-        {agentText() ? <text fg="#ffffff">{agentText()}</text> : null}
-        <text fg={context.theme.text.muted}>{agentText() ? " · " : null}</text>
-        {contextText() ? (
-          <text fg={contextText().fg}>{contextText().text}</text>
-        ) : null}
-        <text fg={context.theme.text.muted}>
-          {[contextText(), tokensText()].some(Boolean) && contextText()
-            ? tokensText()
-              ? " · "
-              : null
-            : null}
-        </text>
-        {tokensText() ? <text fg={context.theme.text.muted}>{tokensText()}</text> : null}
-        {windowText() ? (
-          <>
-            <text fg={context.theme.text.muted}> · </text>
-            <text fg={windowText().fg}>{windowText().text}</text>
-          </>
-        ) : null}
-      </box>
-    )
+    // Вся строка — один ряд: путь с веткой, модель с агентом, контекст и лимиты.
+    const allSegments = () => [dirSegment(), ...lineSegments()]
 
-    const lines = () => (
-      <box flexDirection="column" width="100%" alignItems="flex-end">
-        {line1()}
-        {lineTwo()}
+    const line = () => (
+      <box flexDirection="row" width="100%" justifyContent="flex-start">
+        <For each={allSegments()}>
+          {(segment, index) => (
+            <>
+              {index() > 0 ? (
+                <text fg={context.theme.text.muted}>{" | "}</text>
+              ) : null}
+              {renderChunks(segment)}
+            </>
+          )}
+        </For>
       </box>
     )
 
     const dispose = [
-      context.ui.slot({ replace: "prompt.footer", render: lines }),
+      context.ui.slot({ replace: "prompt.footer", render: line }),
       context.ui.slot({ append: "home.footer.status", render: line1 }),
     ]
     return () => {
