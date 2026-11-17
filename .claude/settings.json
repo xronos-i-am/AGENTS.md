@@ -11,7 +11,7 @@
     ],
     "defaultMode": "auto"
   },
-  "model": "opus",
+  "model": "sonnet",
   "skillOverrides": {
     "anthropic-skills:built-in-browser": "off",
     "anthropic-skills:chrome-browser": "off",
@@ -33,8 +33,8 @@
         "hooks": [
           {
             "type": "command",
-            "async": true,
-            "command": "\"${CLAUDE_PROJECT_DIR}/.claude/hooks/outdated-skills/outdated-deps.sh\""
+            "command": "\"${CLAUDE_PROJECT_DIR}/.claude/hooks/outdated-skills/outdated-deps.sh\"",
+            "async": true
           }
         ]
       }
