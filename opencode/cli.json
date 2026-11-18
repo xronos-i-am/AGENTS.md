@@ -21,6 +21,7 @@
     "input.buffer.home": "home",
     "input.buffer.end": "end",
     "session.first": "ctrl+home",
-    "session.last": "ctrl+end"
+    "session.last": "ctrl+end",
+    "variant.cycle": "none"
   }
 }
