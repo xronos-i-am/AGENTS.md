@@ -99,6 +99,7 @@ export default Plugin.define({
     // Данные общие для location, поэтому синкаем их не чаще раза в минуту,
     // а читаем из кэша на каждом тике интерфейса.
     const [usageInfo, setUsageInfo] = createSignal<any>()
+    const [now, setNow] = createSignal(Date.now())
     let lastUsageSync = 0
 
     const refreshUsage = () => {
@@ -128,6 +129,7 @@ export default Plugin.define({
       if (context.ui.model.current()?.providerID !== "opencode-go") return []
       const go = usageInfo()?.go
       if (!go) return []
+      const currentNow = now()
 
       return [
         { label: "5ч", meter: go.rolling, withDate: false },
@@ -135,9 +137,19 @@ export default Plugin.define({
       ]
         .filter(({ meter }) => meter)
         .map(({ label, meter, withDate }) => {
+          const resetText =
+            typeof meter.resetsAt === "number"
+              ? formatReset(meter.resetsAt, withDate)
+              : undefined
+          if (typeof meter.resetsAt === "number" && meter.resetsAt <= currentNow) {
+            return {
+              text: resetText ? `${label}:уст. (${resetText})` : `${label}:уст.`,
+              fg: context.theme.text.muted,
+            }
+          }
           const pct = Math.round(meter.percent)
           return {
-            text: `${label}:${pct}% до ${formatReset(meter.resetsAt, withDate)}`,
+            text: resetText ? `${label}:${pct}% до ${resetText}` : `${label}:${pct}%`,
             fg: limitColor(pct),
           }
         })
@@ -145,6 +157,7 @@ export default Plugin.define({
 
     // --- обновление раз в 2 секунды; лимиты синкаем не чаще раза в минуту ---
     const interval = setInterval(() => {
+      setNow(Date.now())
       refreshGit()
       refreshUsage()
       const id = currentSessionID()

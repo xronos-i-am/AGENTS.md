@@ -5,17 +5,135 @@
 
 export LC_NUMERIC=C
 
+now="${STATUSLINE_NOW:-$(date +%s)}"
+cache_dir="${STATUSLINE_QUOTA_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/agy-statusline}"
+git_cache_ttl="${STATUSLINE_GIT_CACHE_TTL:-5}"
 input=$(cat)
-# 1. Текущая папка / workspace root
-cwd=$(echo "$input" | jq -r '.cwd // .workspace.current_dir // .workspace // empty' 2>/dev/null)
+
+hash_key() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    printf '%s' "$1" | sha256sum | cut -c1-16
+  elif command -v shasum >/dev/null 2>&1; then
+    printf '%s' "$1" | shasum -a 256 | cut -c1-16
+  else
+    printf '%s' "$1" | cksum | awk '{print $1}'
+  fi
+}
+
+# Общий парсер timestamp (ISO-8601, unix s/ms, относительные секунды < 1e7) в unix epoch.
+JQ_PARSE_TS='
+def parse_ts($now):
+  if type == "number" then
+    if . < 10000000 then ($now + floor)
+    elif . > 100000000000 then (. / 1000 | floor)
+    else floor end
+  elif type == "string" then
+    if test("^[0-9]+(\\.[0-9]+)?$") then
+      (tonumber | if . < 10000000 then ($now + floor)
+                  elif . > 100000000000 then (. / 1000 | floor)
+                  else floor end)
+    elif test("Z$") then
+      (sub("\\.[0-9]+Z$"; "Z") | try fromdateiso8601 catch null)
+    elif test("[+-][0-9]{2}:?[0-9]{2}$") then
+      (capture("^(?<dt>.+?)(\\.[0-9]+)?(?<sign>[+-])(?<hh>[0-9]{2}):?(?<mm>[0-9]{2})$")
+       | ((.dt + "Z") | try fromdateiso8601 catch null) as $base
+       | if $base == null then null
+         else $base + ((if .sign == "+" then -1 else 1 end) * ((.hh | tonumber) * 3600 + (.mm | tonumber) * 60))
+         end)
+    else null end
+  else null end;
+'
+
+# Один проход jq по stdin: все базовые поля + rate_limits.
+mapfile -t parsed < <(printf '%s' "$input" | jq -r --argjson now "$now" "$JQ_PARSE_TS"'
+  def clean: if . == null then "" else tostring | gsub("[\r\n]+"; " ") end;
+  [
+    (.cwd // .workspace.current_dir // .workspace // ""),
+    (.vcs.branch // ""),
+    (if .vcs.dirty == true then "true" else "" end),
+    (.model.display_name // .model.id // ""),
+    (.effort.level // .model.effort // ""),
+    (.cycle_mode // .permission_mode // .mode // ""),
+    (.conversation_id // .session_id // ""),
+    (.transcript_path // ""),
+    (if .context_window.current_usage != null then
+       ((.context_window.current_usage.input_tokens // 0) + (.context_window.current_usage.cache_read_input_tokens // 0) + (.context_window.current_usage.cache_creation_input_tokens // 0))
+     elif .context_window.total_tokens != null then
+       .context_window.total_tokens
+     elif .context_window.total_input_tokens != null then
+       (.context_window.total_input_tokens + (.context_window.total_output_tokens // 0))
+     else "" end),
+    (.email // ""),
+    (.plan_tier // ""),
+    (if ((.quota // .quotas) | type) == "object" and (((.quota // .quotas) | length) > 0) then "1" else "" end),
+    (.rate_limits.five_hour.used_percentage // .rate_limits["5h"].used_percentage // ""),
+    ((.rate_limits.five_hour.resets_at // .rate_limits["5h"].resets_at) | parse_ts($now)),
+    (.rate_limits.seven_day.used_percentage // .rate_limits.weekly.used_percentage // .rate_limits["7d"].used_percentage // ""),
+    ((.rate_limits.seven_day.resets_at // .rate_limits.weekly.resets_at // .rate_limits["7d"].resets_at) | parse_ts($now))
+  ] | map(clean) | .[]
+' 2>/dev/null)
+
+cwd="${parsed[0]:-}"
+vcs_branch="${parsed[1]:-}"
+vcs_dirty="${parsed[2]:-}"
+model="${parsed[3]:-}"
+effort="${parsed[4]:-}"
+mode="${parsed[5]:-}"
+conv_id="${parsed[6]:-}"
+transcript_path="${parsed[7]:-}"
+context_tokens="${parsed[8]:-}"
+email="${parsed[9]:-}"
+plan_tier="${parsed[10]:-}"
+has_quota="${parsed[11]:-}"
+rl_5h_pct="${parsed[12]:-}"
+rl_5h_epoch="${parsed[13]:-}"
+rl_7d_pct="${parsed[14]:-}"
+rl_7d_epoch="${parsed[15]:-}"
+
+# 1–2. Текущая папка (с нормализацией worktree), ветка git и статус изменений (кэш на 5 сек)
 [ -z "$cwd" ] && cwd=$(pwd)
 
 display_cwd="$cwd"
-git_toplevel=$(git -C "$cwd" --no-optional-locks rev-parse --show-toplevel 2>/dev/null)
-git_common_dir=$(git -C "$cwd" --no-optional-locks rev-parse --path-format=absolute --git-common-dir 2>/dev/null)
-if [ -n "$git_toplevel" ] && [ "$(basename "$git_common_dir")" = ".git" ]; then
-  main_root=$(dirname "$git_common_dir")
-  [ "$git_toplevel" != "$main_root" ] && display_cwd="$main_root${cwd#"$git_toplevel"}"
+git_branch=""
+git_dirty="0"
+git_cache_hit=""
+git_cache_file="$cache_dir/git-$(hash_key "$cwd").cache"
+
+if [ -r "$git_cache_file" ] && [[ "$git_cache_ttl" =~ ^[0-9]+$ ]] && [ "$git_cache_ttl" -gt 0 ]; then
+  mapfile -t git_cached < "$git_cache_file" 2>/dev/null
+  git_cached_ts="${git_cached[0]:-}"
+  if [[ "$git_cached_ts" =~ ^[0-9]+$ ]] && [ "$now" -ge "$git_cached_ts" ] && [ $(( now - git_cached_ts )) -lt "$git_cache_ttl" ]; then
+    display_cwd="${git_cached[1]:-$cwd}"
+    git_branch="${git_cached[2]:-}"
+    git_dirty="${git_cached[3]:-0}"
+    git_cache_hit=1
+  fi
+fi
+
+if [ -z "$git_cache_hit" ]; then
+  git_toplevel=$(git -C "$cwd" --no-optional-locks rev-parse --show-toplevel 2>/dev/null)
+  git_common_dir=$(git -C "$cwd" --no-optional-locks rev-parse --path-format=absolute --git-common-dir 2>/dev/null)
+  if [ -n "$git_toplevel" ] && [ "$(basename "$git_common_dir")" = ".git" ]; then
+    main_root=$(dirname "$git_common_dir")
+    [ "$git_toplevel" != "$main_root" ] && display_cwd="$main_root${cwd#"$git_toplevel"}"
+  fi
+
+  git_branch=$(git -C "$cwd" --no-optional-locks symbolic-ref --short -q HEAD 2>/dev/null)
+  if [ -z "$git_branch" ]; then
+    git_branch=$(git -C "$cwd" --no-optional-locks rev-parse --short HEAD 2>/dev/null)
+  fi
+  if [ -n "$git_branch" ] && [ -n "$(git -C "$cwd" --no-optional-locks status --porcelain 2>/dev/null)" ]; then
+    git_dirty="1"
+  fi
+
+  if [[ "$git_cache_ttl" =~ ^[0-9]+$ ]] && [ "$git_cache_ttl" -gt 0 ] && mkdir -p "$cache_dir" 2>/dev/null; then
+    tmp_git_cache="$git_cache_file.$$.$RANDOM"
+    if printf '%s\n%s\n%s\n%s\n' "$now" "$display_cwd" "$git_branch" "$git_dirty" > "$tmp_git_cache" 2>/dev/null; then
+      mv -f "$tmp_git_cache" "$git_cache_file" 2>/dev/null || rm -f "$tmp_git_cache" 2>/dev/null
+    else
+      rm -f "$tmp_git_cache" 2>/dev/null
+    fi
+  fi
 fi
 
 short_cwd="${display_cwd#$HOME/projects}"
@@ -23,29 +141,18 @@ short_cwd="${display_cwd#$HOME/projects}"
 
 printf '\033[01;34m%s\033[00m' "$short_cwd"
 
-# 2. Текущая ветка git и звездочка (*) при наличии изменений
-git_branch=$(git -C "$cwd" --no-optional-locks symbolic-ref --short -q HEAD 2>/dev/null)
 if [ -z "$git_branch" ]; then
-  git_branch=$(git -C "$cwd" --no-optional-locks rev-parse --short HEAD 2>/dev/null)
-fi
-if [ -z "$git_branch" ]; then
-  git_branch=$(echo "$input" | jq -r '.vcs.branch // empty' 2>/dev/null)
+  git_branch="$vcs_branch"
 fi
 
 if [ -n "$git_branch" ]; then
   printf ' \033[35m%s\033[00m' "$git_branch"
-  is_dirty=""
-  if [ -n "$(git -C "$cwd" --no-optional-locks status --porcelain 2>/dev/null)" ]; then
-    is_dirty=1
-  elif [ "$(echo "$input" | jq -r '.vcs.dirty // empty' 2>/dev/null)" = "true" ]; then
-    is_dirty=1
+  if [ "$git_dirty" = "1" ] || [ "$vcs_dirty" = "true" ]; then
+    printf '\033[33m*\033[00m'
   fi
-  [ -n "$is_dirty" ] && printf '\033[33m*\033[00m'
 fi
 
 # 3. Модель сессии и текущий режим работы (plan/auto/accept-edits/default)
-model=$(echo "$input" | jq -r '.model.display_name // .model.id // empty' 2>/dev/null)
-effort=$(echo "$input" | jq -r '.effort.level // .model.effort // empty' 2>/dev/null)
 if [ -n "$model" ] && [ -n "$effort" ]; then
   # Не дублируем effort, если он уже включен в display_name (например, "Gemini 3.8 Flash (High)")
   if ! [[ "$model" =~ \([a-zA-Z0-9_+\ -]+\)$ ]]; then
@@ -53,7 +160,6 @@ if [ -n "$model" ] && [ -n "$effort" ]; then
   fi
 fi
 
-mode=$(echo "$input" | jq -r '.cycle_mode // .permission_mode // .mode // empty' 2>/dev/null)
 [ -z "$mode" ] && mode="default"
 case "$mode" in
   plan)
@@ -78,26 +184,15 @@ else
 fi
 
 # 4. Размер израсходованного контекста (входные токены последнего шага)
-conv_id=$(echo "$input" | jq -r '.conversation_id // .session_id // empty' 2>/dev/null)
-transcript_path=$(echo "$input" | jq -r '.transcript_path // empty' 2>/dev/null)
-if [ -z "$transcript_path" ] && [ -n "$conv_id" ]; then
+if [ -n "$conv_id" ] && { [ -z "$transcript_path" ] || [ ! -f "$transcript_path" ]; }; then
   candidate="$HOME/.gemini/antigravity-cli/brain/$conv_id/.system_generated/logs/transcript.jsonl"
   [ -f "$candidate" ] && transcript_path="$candidate"
 fi
 
-context_tokens=$(echo "$input" | jq -r '
-  (if .context_window.current_usage != null then
-    ((.context_window.current_usage.input_tokens // 0) + (.context_window.current_usage.cache_read_input_tokens // 0) + (.context_window.current_usage.cache_creation_input_tokens // 0))
-   else empty end)
-  // .context_window.total_tokens
-  // (if .context_window.total_input_tokens != null then (.context_window.total_input_tokens + (.context_window.total_output_tokens // 0)) else empty end)
-  // empty
-' 2>/dev/null)
-
 if [ -z "$context_tokens" ] || [ "$context_tokens" = "0" ]; then
   if [ -n "$transcript_path" ] && [ -f "$transcript_path" ]; then
     context_tokens=$(jq -n '
-      [inputs | 
+      [inputs |
         if .type == "PLANNER_RESPONSE" and .input_tokens != null then
           ((.input_tokens // 0) + (.cache_read_tokens // 0))
         elif .type == "assistant" and (.isSidechain != true) and (.message.usage != null) then
@@ -127,82 +222,118 @@ fi
 printf ' \033[02m|\033[00m'
 printf " ${ctx_color}ctx:%s\\033[00m" "$context_human"
 
-# 5. Лимиты 5-часового и недельного окна со временем сброса
-model_lower=$(echo "$model" | tr '[:upper:]' '[:lower:]')
-q_prefix="gemini"
-if [[ "$model_lower" =~ claude|gpt|openai|anthropic|3p ]]; then
-  q_prefix="3p"
+# 5. Лимиты 5-часового и недельного окна со временем сброса.
+# Каждый процесс agy кэширует снимок .quota в памяти и может долго слать устаревшие
+# значения (даже после наступления reset_time). Мержим .quota всех сессий одного
+# аккаунта через общий кэш: побеждает более поздний reset_time, а в том же окне —
+# меньший remaining_fraction.
+model_lower=$(printf '%s' "$model" | tr '[:upper:]' '[:lower:]')
+q_prefix=""
+if [ -n "$model_lower" ]; then
+  q_prefix="gemini"
+  if [[ "$model_lower" =~ claude|gpt|openai|anthropic|3p ]]; then
+    q_prefix="3p"
+  fi
 fi
 
-five_hour=$(echo "$input" | jq -r --arg p "$q_prefix" '
-  .rate_limits.five_hour.used_percentage
-  // .rate_limits["5h"].used_percentage
-  // (if (.quota[$p + "-5h"].remaining_fraction != null) then ((1 - .quota[$p + "-5h"].remaining_fraction) * 100)
-      elif (.quota["gemini-5h"].remaining_fraction != null) then ((1 - .quota["gemini-5h"].remaining_fraction) * 100)
-      elif (.quota["3p-5h"].remaining_fraction != null) then ((1 - .quota["3p-5h"].remaining_fraction) * 100)
-      elif (.quotas[$p + "-5h"].remaining_fraction != null) then ((1 - .quotas[$p + "-5h"].remaining_fraction) * 100)
-      else empty end)
-' 2>/dev/null | head -n 1)
+five_hour="$rl_5h_pct"
+five_hour_epoch="$rl_5h_epoch"
+seven_day="$rl_7d_pct"
+seven_day_epoch="$rl_7d_epoch"
 
-five_hour_resets=$(echo "$input" | jq -r --arg p "$q_prefix" '
-  .rate_limits.five_hour.resets_at
-  // .rate_limits["5h"].resets_at
-  // .quota[$p + "-5h"].reset_time
-  // .quota[$p + "-5h"].reset_in_seconds
-  // .quota["gemini-5h"].reset_time
-  // .quota["gemini-5h"].reset_in_seconds
-  // .quota["3p-5h"].reset_time
-  // .quota["3p-5h"].reset_in_seconds
-  // .quotas[$p + "-5h"].reset_time
-  // empty
-' 2>/dev/null | head -n 1)
-
-seven_day=$(echo "$input" | jq -r --arg p "$q_prefix" '
-  .rate_limits.seven_day.used_percentage
-  // .rate_limits.weekly.used_percentage
-  // .rate_limits["7d"].used_percentage
-  // (if (.quota[$p + "-weekly"].remaining_fraction != null) then ((1 - .quota[$p + "-weekly"].remaining_fraction) * 100)
-      elif (.quota["gemini-weekly"].remaining_fraction != null) then ((1 - .quota["gemini-weekly"].remaining_fraction) * 100)
-      elif (.quota["3p-weekly"].remaining_fraction != null) then ((1 - .quota["3p-weekly"].remaining_fraction) * 100)
-      elif (.quotas[$p + "-weekly"].remaining_fraction != null) then ((1 - .quotas[$p + "-weekly"].remaining_fraction) * 100)
-      else empty end)
-' 2>/dev/null | head -n 1)
-
-seven_day_resets=$(echo "$input" | jq -r --arg p "$q_prefix" '
-  .rate_limits.seven_day.resets_at
-  // .rate_limits.weekly.resets_at
-  // .quota[$p + "-weekly"].reset_time
-  // .quota[$p + "-weekly"].reset_in_seconds
-  // .quota["gemini-weekly"].reset_time
-  // .quota["gemini-weekly"].reset_in_seconds
-  // .quota["3p-weekly"].reset_time
-  // .quota["3p-weekly"].reset_in_seconds
-  // .quotas[$p + "-weekly"].reset_time
-  // empty
-' 2>/dev/null | head -n 1)
-
-format_reset() {
-  local val="$1"
-  local fmt="$2"
-  [ -z "$val" ] && return
-  if [[ "$val" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
-    local val_int=${val%.*}
-    if [ "$val_int" -lt 10000000 ]; then
-      local target=$(( $(date +%s) + val_int ))
-      date -d "@$target" "$fmt" 2>/dev/null
-    else
-      if [ "$val_int" -gt 100000000000 ]; then
-        val_int=$(( val_int / 1000 ))
-      fi
-      date -d "@$val_int" "$fmt" 2>/dev/null
-    fi
+if [ "$has_quota" = "1" ]; then
+  if [ -n "$email" ] || [ -n "$plan_tier" ]; then
+    acct_key=$(hash_key "${email}"$'\n'"${plan_tier}")
   else
-    date -d "$val" "$fmt" 2>/dev/null
+    acct_key="default"
   fi
-}
+  cache_file="$cache_dir/quota-$acct_key.json"
+  lock_file="$cache_dir/quota-$acct_key.lock"
+  cache_writable=""
+  mkdir -p "$cache_dir" 2>/dev/null && cache_writable=1
 
-five_hour_until=$(format_reset "$five_hour_resets" "+%H:%M")
-seven_day_until=$(format_reset "$seven_day_resets" "+%d.%m %H:%M")
+  q_out=()
+  merge_quota() {
+    local raw_cache=""
+    [ -r "$cache_file" ] && raw_cache=$(<"$cache_file")
+
+    mapfile -t q_out < <(printf '%s' "$input" | jq -r \
+      --argjson now "$now" \
+      --arg p "$q_prefix" \
+      --arg raw_cache "$raw_cache" \
+      "$JQ_PARSE_TS"'
+      def norm_bucket:
+        if (type == "object") and (.remaining_fraction != null) then
+          (if .reset_time != null then (.reset_time | parse_ts($now))
+           elif .reset_epoch != null then (.reset_epoch | parse_ts($now))
+           elif .reset_in_seconds != null then ($now + (.reset_in_seconds | tonumber | floor))
+           else null end) as $ep
+          | {
+              remaining_fraction: (.remaining_fraction | tonumber),
+              reset_epoch: $ep
+            }
+        else null end;
+
+      def pick_fresher($inc; $old):
+        if $old == null then $inc
+        elif $inc == null then $old
+        elif ($inc.reset_epoch != null) and ($old.reset_epoch != null) then
+          if $inc.reset_epoch > ($old.reset_epoch + 2) then $inc
+          elif $old.reset_epoch > ($inc.reset_epoch + 2) then $old
+          elif $inc.remaining_fraction < $old.remaining_fraction then $inc
+          else $old end
+        elif $inc.reset_epoch != null then $inc
+        elif $old.reset_epoch != null then $old
+        elif $inc.remaining_fraction < $old.remaining_fraction then $inc
+        else $old end;
+
+      (try ($raw_cache | fromjson | if type == "object" then . else {} end) catch {}) as $cached_raw
+      | ($cached_raw | with_entries(.value |= norm_bucket | select(.value != null))) as $cached
+      | ((.quota // .quotas // {}) | with_entries(.value |= norm_bucket | select(.value != null))) as $incoming
+      | (($cached | keys_unsorted) + ($incoming | keys_unsorted) | unique) as $keys
+      | (reduce $keys[] as $k ({};
+          pick_fresher($incoming[$k]; $cached[$k]) as $best
+          | if $best != null then .[$k] = $best else . end
+        )) as $merged
+      | (if $p != "" then $merged[$p + "-5h"] else ($merged["gemini-5h"] // $merged["3p-5h"]) end) as $b5
+      | (if $p != "" then $merged[$p + "-weekly"] else ($merged["gemini-weekly"] // $merged["3p-weekly"]) end) as $b7
+      | [
+          (if ($merged != $cached) or ($raw_cache == "") or ($cached_raw != $cached) then "1" else "0" end),
+          ($merged | tojson),
+          (if $b5 != null then (((1 - $b5.remaining_fraction) * 100) | tostring) else "" end),
+          (if ($b5 != null) and ($b5.reset_epoch != null) then ($b5.reset_epoch | tostring) else "" end),
+          (if $b7 != null then (((1 - $b7.remaining_fraction) * 100) | tostring) else "" end),
+          (if ($b7 != null) and ($b7.reset_epoch != null) then ($b7.reset_epoch | tostring) else "" end)
+        ] | .[]
+    ' 2>/dev/null)
+
+    if [ "${q_out[0]:-0}" = "1" ] && [ -n "${q_out[1]:-}" ] && [ -n "$cache_writable" ]; then
+      local tmp_cache="$cache_file.$$.$RANDOM"
+      if printf '%s\n' "${q_out[1]}" > "$tmp_cache" 2>/dev/null; then
+        mv -f "$tmp_cache" "$cache_file" 2>/dev/null || rm -f "$tmp_cache" 2>/dev/null
+      else
+        rm -f "$tmp_cache" 2>/dev/null
+      fi
+    fi
+  }
+
+  if [ -n "$cache_writable" ] && command -v flock >/dev/null 2>&1 && exec 9>"$lock_file" 2>/dev/null; then
+    if flock -w 0.5 9 2>/dev/null; then
+      merge_quota
+      flock -u 9 2>/dev/null
+    else
+      merge_quota
+    fi
+    exec 9>&- 2>/dev/null
+  else
+    merge_quota
+  fi
+
+  [ -z "$five_hour" ] && five_hour="${q_out[2]:-}"
+  [ -z "$five_hour_epoch" ] && five_hour_epoch="${q_out[3]:-}"
+  [ -z "$seven_day" ] && seven_day="${q_out[4]:-}"
+  [ -z "$seven_day_epoch" ] && seven_day_epoch="${q_out[5]:-}"
+fi
 
 limit_color() {
   local pct="$1"
@@ -213,16 +344,27 @@ limit_color() {
   }'
 }
 
-if [ -n "$five_hour" ]; then
-  c_5h=$(limit_color "$five_hour")
-  printf " \\033[02m|\\033[00m ${c_5h}5ч:%.0f%%" "$five_hour"
-  [ -n "$five_hour_until" ] && printf ' до %s' "$five_hour_until"
-  printf '\033[00m'
-fi
+print_limit() {
+  local label="$1" pct="$2" epoch="$3" fmt="$4"
+  [ -z "$pct" ] && return
+  local until=""
+  if [ -n "$epoch" ]; then
+    until=$(date -d "@$epoch" "$fmt" 2>/dev/null)
+  fi
+  if [ -n "$epoch" ] && [ "$epoch" -le "$now" ]; then
+    if [ -n "$until" ]; then
+      printf ' \033[02m|\033[00m \033[02m%s:уст. (%s)\033[00m' "$label" "$until"
+    else
+      printf ' \033[02m|\033[00m \033[02m%s:уст.\033[00m' "$label"
+    fi
+  else
+    local color
+    color=$(limit_color "$pct")
+    printf " \\033[02m|\\033[00m ${color}%s:%.0f%%" "$label" "$pct"
+    [ -n "$until" ] && printf ' до %s' "$until"
+    printf '\033[00m'
+  fi
+}
 
-if [ -n "$seven_day" ]; then
-  c_7d=$(limit_color "$seven_day")
-  printf " \\033[02m|\\033[00m ${c_7d}7д:%.0f%%" "$seven_day"
-  [ -n "$seven_day_until" ] && printf ' до %s' "$seven_day_until"
-  printf '\033[00m'
-fi
+print_limit "5ч" "$five_hour" "$five_hour_epoch" "+%H:%M"
+print_limit "7д" "$seven_day" "$seven_day_epoch" "+%d.%m %H:%M"

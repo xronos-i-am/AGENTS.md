@@ -4,6 +4,7 @@
 # Проценты лимитов приходят с точкой, а LC_NUMERIC=ru_RU ждёт запятую и валит printf.
 export LC_NUMERIC=C
 
+now="${STATUSLINE_NOW:-$(date +%s)}"
 input=$(cat)
 cwd=$(echo "$input" | jq -r '.workspace.current_dir')
 
@@ -70,15 +71,51 @@ five_hour_resets=$(echo "$input" | jq -r '.rate_limits.five_hour.resets_at // em
 seven_day=$(echo "$input" | jq -r '.rate_limits.seven_day.used_percentage // empty')
 seven_day_resets=$(echo "$input" | jq -r '.rate_limits.seven_day.resets_at // empty')
 
-five_hour_until=""
-if [ -n "$five_hour_resets" ]; then
-  five_hour_until=$(date -d "@$five_hour_resets" +%H:%M 2>/dev/null)
-fi
+normalize_epoch() {
+  local val="$1"
+  [ -z "$val" ] && return
+  if [[ "$val" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+    local val_int=${val%.*}
+    if [ "$val_int" -gt 100000000000 ]; then
+      val_int=$(( val_int / 1000 ))
+    fi
+    printf '%s' "$val_int"
+  else
+    date -d "$val" +%s 2>/dev/null
+  fi
+}
 
-seven_day_until=""
-if [ -n "$seven_day_resets" ]; then
-  seven_day_until=$(date -d "@$seven_day_resets" +%d.%m\ %H:%M 2>/dev/null)
-fi
+limit_color() {
+  local pct="$1"
+  awk -v p="$pct" 'BEGIN {
+    if (p >= 90) printf "\\033[31m";
+    else if (p >= 70) printf "\\033[33m";
+    else printf "\\033[02m";
+  }'
+}
+
+print_limit() {
+  local label="$1" pct="$2" raw_reset="$3" fmt="$4"
+  [ -z "$pct" ] && return
+  local epoch="" until=""
+  epoch=$(normalize_epoch "$raw_reset")
+  if [ -n "$epoch" ]; then
+    until=$(date -d "@$epoch" "$fmt" 2>/dev/null)
+  fi
+  if [ -n "$epoch" ] && [ "$epoch" -le "$now" ]; then
+    if [ -n "$until" ]; then
+      printf ' \033[02m|\033[00m \033[02m%s:уст. (%s)\033[00m' "$label" "$until"
+    else
+      printf ' \033[02m|\033[00m \033[02m%s:уст.\033[00m' "$label"
+    fi
+  else
+    local color
+    color=$(limit_color "$pct")
+    printf " \\033[02m|\\033[00m ${color}%s:%.0f%%" "$label" "$pct"
+    [ -n "$until" ] && printf ' до %s' "$until"
+    printf '\033[00m'
+  fi
+}
 
 printf ' \033[02m|\033[00m'
 # Больше 150k токенов — жёлтый, больше 300k — красный; иначе приглушённый.
@@ -90,13 +127,5 @@ else
   ctx_color='\033[02m'
 fi
 printf " ${ctx_color}ctx:%s\\033[00m" "$context_human"
-if [ -n "$five_hour" ]; then
-  printf ' \033[02m| 5ч:%.0f%%' "$five_hour"
-  [ -n "$five_hour_until" ] && printf ' до %s' "$five_hour_until"
-  printf '\033[00m'
-fi
-if [ -n "$seven_day" ]; then
-  printf ' \033[02m| 7д:%.0f%%' "$seven_day"
-  [ -n "$seven_day_until" ] && printf ' до %s' "$seven_day_until"
-  printf '\033[00m'
-fi
+print_limit "5ч" "$five_hour" "$five_hour_resets" "+%H:%M"
+print_limit "7д" "$seven_day" "$seven_day_resets" "+%d.%m %H:%M"
