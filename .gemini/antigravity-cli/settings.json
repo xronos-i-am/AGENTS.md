@@ -1,7 +1,7 @@
 {
   "allowNonWorkspaceAccess": true,
   "altScreenMode": "always",
-  "model": "Claude Sonnet 5.5 (Low)",
+  "model": "Gemini 4 Neon (Medium)",
   "permissions": {
     "allow": [
       "command(apm)",
@@ -11,7 +11,8 @@
       "command(make release)",
       "command(ls)",
       "command(make test)",
-      "command(git add)"
+      "command(git add)",
+      "command(git worktree)"
     ]
   },
   "showTips": false,
